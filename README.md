@@ -22,6 +22,16 @@ It is deliberately small.
 - Jellyfin tells Cratarr what is playing; Cratarr tells Jellyfin when a playlist file changed.
 - Tracks outside your library folder (an incoming or sandbox folder, say) can never be added to a playlist.
 
+## Album cover
+
+The page header shows the cover of the playing track's album, small, next to the title. `GET /api/cover/{item_id}`
+looks the track up in Jellyfin, maps it to its library entry and serves the first of `cover.jpg`, `cover.jpeg`,
+`cover.png`, `folder.jpg`, `folder.jpeg`, `folder.png`, `front.jpg`, `front.png` (any letter case) found in the
+album folder, read from the music folder on disk (the playlist folder). It answers 404 when there is none, when the
+track is unknown or outside the library, or when the file is over 10 MB. Responses carry an `ETag` and
+`Cache-Control: public, max-age=86400`, and honour `If-None-Match`. Images are not resized or cached in memory.
+Security rules are in [decision 0003](docs/decisions/0003-album-cover-endpoint.md).
+
 ## Design goals
 
 - Lean: one container, a single static binary, a small memory budget.

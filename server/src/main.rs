@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod config;
+mod covers;
 mod jellyfin;
 mod m3u;
 mod nowplaying;
