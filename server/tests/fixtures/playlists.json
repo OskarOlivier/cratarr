@@ -1,0 +1,36 @@
+{
+  "Items": [
+    {
+      "Id": "81df5422d02d4d5ba412803ebdaa0578",
+      "ServerId": "f93b4e594545d712e095f9fd9b1ad8e3",
+      "Name": "Playlist A",
+      "Type": "Playlist",
+      "MediaType": "Unknown",
+      "IsFolder": true,
+      "RunTimeTicks": 109873469018,
+      "ChildCount": 37
+    },
+    {
+      "Id": "48a266caf927b5043de1d2273386dc49",
+      "ServerId": "f93b4e594545d712e095f9fd9b1ad8e3",
+      "Name": "Playlist B",
+      "Type": "Playlist",
+      "MediaType": "Unknown",
+      "IsFolder": true,
+      "RunTimeTicks": 356548660255,
+      "ChildCount": 123
+    },
+    {
+      "Id": "39b8986ce77e1043e221d4a9d322685e",
+      "ServerId": "f93b4e594545d712e095f9fd9b1ad8e3",
+      "Name": "Playlist C",
+      "Type": "Playlist",
+      "MediaType": "Unknown",
+      "IsFolder": true,
+      "RunTimeTicks": 147417512706,
+      "ChildCount": 59
+    }
+  ],
+  "TotalRecordCount": 3,
+  "StartIndex": 0
+}

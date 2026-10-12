@@ -1,0 +1,36 @@
+[
+  {
+    "Id": "caf5cbf6a7ef7a87c32832f9c74a2ca5",
+    "Client": "Finamp",
+    "DeviceName": "Device 1",
+    "NowPlayingItem": {
+      "Id": "45809e5d9a8bd8017331ca32496b08e8",
+      "ParentId": "50d8f349be62532fd97749dd5d168c21",
+      "AlbumId": "50d8f349be62532fd97749dd5d168c21",
+      "ServerId": "f93b4e594545d712e095f9fd9b1ad8e3",
+      "Name": "Track D",
+      "Type": "Audio",
+      "MediaType": "Audio",
+      "IsFolder": false,
+      "RunTimeTicks": 1688869580,
+      "Album": "Album D",
+      "AlbumArtist": "Artist D",
+      "Artists": [
+        "Artist D"
+      ],
+      "Path": "/data/media/Music/Artist D - Album D (2020)/01 Artist D - Track D.flac"
+    },
+    "PlayState": {
+      "IsPaused": false,
+      "PositionTicks": 870142620
+    }
+  },
+  {
+    "Id": "9f30c16c41c8296bff95b40a7ab7c275",
+    "Client": "Finamp",
+    "DeviceName": "Device 1",
+    "PlayState": {
+      "IsPaused": false
+    }
+  }
+]
