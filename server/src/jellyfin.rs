@@ -4,7 +4,6 @@
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use serde_json::json;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -38,6 +37,18 @@ pub struct ActivityEntry {
     #[serde(rename = "Type")]
     pub kind: String,
     pub item_id: Option<String>,
+}
+
+/// A playlist as listed by Jellyfin (the cheap listing; reading a playlist's entries is the slow part).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ListedPlaylist {
+    pub id: String,
+    pub name: String,
+}
+
+pub fn pick_playlist_id(items: &[ListedPlaylist], name: &str) -> Option<String> {
+    items.iter().find(|p| p.name == name).map(|p| p.id.clone())
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,13 +123,27 @@ impl Jellyfin {
         self.get(&format!("/Users/{}/Items/{id}", self.user_id)).await
     }
 
-    /// Tell Jellyfin a file changed on disk, so it re-reads the playlist. `path` is as Jellyfin sees it.
-    pub async fn library_updated(&self, path: &str) -> Result<()> {
-        let url = format!("{}/Library/Media/Updated", self.base);
-        let body = json!({ "Updates": [{ "Path": path, "UpdateType": "Modified" }] });
-        let status = self.http.post(&url).json(&body).send().await.context("POST /Library/Media/Updated")?.status();
+    /// Ask Jellyfin to re-read one imported playlist after its `.m3u` file changed. `name` is the file name
+    /// without `.m3u`, which is also the playlist item's name.
+    ///
+    /// Verified against a real server (10.11): a "file changed" notice (`/Library/Media/Updated`) does nothing,
+    /// the `ValidationOnly` and `Default` refresh modes do nothing, plain `FullRefresh` picks up added entries
+    /// but keeps removed ones, and `FullRefresh` with `ReplaceAllMetadata=true` handles both (the entry count
+    /// followed the file within seconds). Parameters go in the query string, as the API expects.
+    pub async fn refresh_playlist(&self, name: &str) -> Result<()> {
+        let listing: ItemsPage<ListedPlaylist> = self
+            .get(&format!("/Users/{}/Items?IncludeItemTypes=Playlist&Recursive=true&Limit=1000", self.user_id))
+            .await?;
+        let Some(id) = pick_playlist_id(&listing.items, name) else {
+            bail!("Jellyfin has no playlist named {name:?}");
+        };
+        let url = format!(
+            "{}/Items/{id}/Refresh?Recursive=false&ImageRefreshMode=None&MetadataRefreshMode=FullRefresh&ReplaceAllMetadata=true",
+            self.base
+        );
+        let status = self.http.post(&url).send().await.context("POST /Items/{id}/Refresh")?.status();
         if !status.is_success() {
-            bail!("POST /Library/Media/Updated returned {status}");
+            bail!("refreshing playlist {name:?} returned {status}");
         }
         Ok(())
     }
@@ -175,6 +200,15 @@ mod tests {
         let s = vec![Session { client: Some("Finamp".into()), now_playing_item: None }];
         assert!(pick_now_playing(&s, "Finamp").is_none());
         assert!(pick_now_playing(&[], "Finamp").is_none());
+    }
+
+    #[test]
+    fn a_playlist_is_found_by_exact_name() {
+        let items: Vec<ListedPlaylist> =
+            serde_json::from_str(r#"[{"Id":"a","Name":"Chill"},{"Id":"b","Name":"Chill Out"}]"#).unwrap();
+        assert_eq!(pick_playlist_id(&items, "Chill").as_deref(), Some("a"));
+        assert_eq!(pick_playlist_id(&items, "chill"), None);
+        assert_eq!(pick_playlist_id(&[], "Chill"), None);
     }
 
     #[test]

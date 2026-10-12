@@ -27,7 +27,10 @@ otherwise:
   (for example an incoming folder) has no such path and can never be added.
 - "What is playing" comes from Jellyfin's activity log (the newest audio start without a later stop), with the
   session record as a fallback.
-- After a write, Jellyfin is told which file changed (best effort) so players see the new playlist.
+- After a write, Cratarr asks Jellyfin to refresh that one playlist item (best effort) so players see the change.
+  Measured on a real server: a "file changed" notice does nothing; the `ValidationOnly` and `Default` refresh
+  modes do nothing; plain `FullRefresh` picks up added entries but keeps removed ones; `FullRefresh` with
+  `ReplaceAllMetadata=true` handles both and the entry count followed the file within seconds.
 - The container needs read-write access to the playlist folder, and only `*.m3u` files directly in it are touched.
 
 ## Consequences

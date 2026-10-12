@@ -19,7 +19,8 @@ It is deliberately small.
 
 - Playlists are plain `.m3u` files in your music folder (the format Jellyfin imports). Cratarr reads and edits the
   files directly, with a backup before every change.
-- Jellyfin tells Cratarr what is playing; Cratarr tells Jellyfin when a playlist file changed.
+- Jellyfin tells Cratarr what is playing; after an edit Cratarr asks Jellyfin to refresh that one playlist
+  (`FullRefresh` with `ReplaceAllMetadata`, the only mode that handles both added and removed entries).
 - Tracks outside your library folder (an incoming or sandbox folder, say) can never be added to a playlist.
 
 ## Album cover
@@ -41,7 +42,7 @@ Security rules are in [decision 0003](docs/decisions/0003-album-cover-endpoint.m
 ## Configuration
 
 Environment variables: `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, `CRATARR_PLAYLIST_DIR` (required);
-`CRATARR_BIND`, `CRATARR_MUSIC_PREFIXES`, `CRATARR_JELLYFIN_PLAYLIST_DIR`, `CRATARR_PLAYER_CLIENT` (optional,
+`CRATARR_BIND`, `CRATARR_MUSIC_PREFIXES`, `CRATARR_PLAYER_CLIENT` (optional,
 see `server/src/config.rs`).
 
 ## Stack

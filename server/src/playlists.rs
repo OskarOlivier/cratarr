@@ -157,6 +157,13 @@ impl Store {
     async fn backup(&self, id: &str, path: &Path) -> Result<()> {
         let dir = self.dir.join(BACKUP_DIR);
         tokio::fs::create_dir_all(&dir).await.with_context(|| format!("creating {}", dir.display()))?;
+        // Shared media folders are group-writable (and setgid); a container umask of 022 would otherwise lock the
+        // group out of the backup folder.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o2775)).await;
+        }
         let mut stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
         let target = loop {
             let t = dir.join(format!("{id}.{stamp}.bak"));
@@ -290,6 +297,17 @@ B/2.mp3
         assert_eq!(backups.len(), 1);
         let b = std::fs::read_to_string(backups[0].as_ref().unwrap().path()).unwrap();
         assert_eq!(b, "A/1.mp3\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_backup_folder_is_group_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = Dir::new();
+        d.write("a.m3u", "A/1.mp3\n");
+        d.store().toggle("a", "B/2.mp3").await.unwrap();
+        let mode = std::fs::metadata(d.0.join(BACKUP_DIR)).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o775);
     }
 
     #[tokio::test]

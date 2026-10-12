@@ -146,12 +146,12 @@ impl App {
         let track = self.now_playing().await?.ok_or(ToggleError::NothingPlaying)?;
         let entry = self.entry_of(&track).ok_or(ToggleError::NotInLibrary)?;
         self.store.toggle(playlist_id, &entry).await?;
-        // Best effort: tell Jellyfin the file changed so Finamp and the others see the new playlist.
+        // Best effort: ask Jellyfin to re-read that playlist so Finamp and the others see the change.
         let jf = self.jf.clone();
-        let path = format!("{}/{}.m3u", self.cfg.jellyfin_playlist_dir.trim_end_matches('/'), playlist_id);
+        let name = playlist_id.to_string();
         tokio::spawn(async move {
-            if let Err(e) = jf.library_updated(&path).await {
-                tracing::warn!("could not tell Jellyfin that {path} changed: {e:#}");
+            if let Err(e) = jf.refresh_playlist(&name).await {
+                tracing::warn!("could not ask Jellyfin to re-read playlist {name:?}: {e:#}");
             }
         });
         Ok(self.state().await?)

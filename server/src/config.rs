@@ -18,8 +18,6 @@ pub struct Config {
     /// Path prefixes, as Jellyfin reports track paths, that make up the curated library. Everything under one of
     /// them maps to a playlist entry; tracks outside them (an incoming folder, say) can never be added.
     pub music_prefixes: Vec<String>,
-    /// The playlist folder as Jellyfin sees it, used only to tell Jellyfin which file changed.
-    pub jellyfin_playlist_dir: String,
 }
 
 fn split_list(v: &str) -> Vec<String> {
@@ -56,7 +54,6 @@ impl Config {
             player_client: lookup("CRATARR_PLAYER_CLIENT").unwrap_or_else(|| "Finamp".into()),
             playlist_dir: need("CRATARR_PLAYLIST_DIR")?,
             music_prefixes,
-            jellyfin_playlist_dir: lookup("CRATARR_JELLYFIN_PLAYLIST_DIR").unwrap_or_else(|| "/Volume1/media/Music".into()),
         })
     }
 }
@@ -86,7 +83,6 @@ mod tests {
         assert_eq!(c.player_client, "Finamp");
         assert_eq!(c.playlist_dir, "/music");
         assert_eq!(c.music_prefixes, vec!["/data/media/Music", "/Volume1/media/Music"]);
-        assert_eq!(c.jellyfin_playlist_dir, "/Volume1/media/Music");
     }
 
     #[test]
