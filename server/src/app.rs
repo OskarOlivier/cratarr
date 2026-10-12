@@ -1,17 +1,17 @@
-//! Application logic: keeps the index in step with Jellyfin (gently, in the background) and decides what a
-//! toggle does. Taps update the index immediately; the slow re-read of the playlist happens afterwards.
+//! Application logic: works out what is playing and which playlist files contain it, and decides what a tap does.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use serde::Serialize;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use crate::config::Config;
-use crate::guard::is_incoming;
-use crate::index::{Index, Listed, PlaylistView};
 use crate::jellyfin::{Jellyfin, PlayingItem, pick_now_playing};
+use crate::m3u::library_entry;
+use crate::nowplaying::{current_from_activity, has_audio_history};
+use crate::playlists::{PlaylistView, Store, StoreError};
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct NowPlayingView {
@@ -19,181 +19,127 @@ pub struct NowPlayingView {
     pub name: String,
     pub artist: Option<String>,
     pub album: Option<String>,
-    /// True when the track is in an incoming path and therefore cannot be added to playlists.
-    pub incoming: bool,
+    /// False when the track is outside the curated library (an incoming folder, say): it cannot be added.
+    pub addable: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct StateView {
     pub now_playing: Option<NowPlayingView>,
     pub playlists: Vec<PlaylistView>,
-    /// Playlists still waiting for their first read (the index is built in the background).
-    pub unindexed: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToggleError {
     #[error("nothing is playing")]
     NothingPlaying,
-    #[error("the playing track is still in the incoming library and cannot be added to a playlist")]
-    Incoming,
+    #[error("the playing track is not in the curated library, so it cannot be added to a playlist")]
+    NotInLibrary,
     #[error("unknown playlist")]
     UnknownPlaylist,
-    #[error("this playlist has not been indexed yet, try again in a moment")]
-    NotIndexedYet,
-    #[error("Jellyfin error: {0}")]
+    #[error("{0:#}")]
     Upstream(#[from] anyhow::Error),
+}
+
+impl From<StoreError> for ToggleError {
+    fn from(e: StoreError) -> Self {
+        match e {
+            StoreError::Unknown => ToggleError::UnknownPlaylist,
+            StoreError::Io(e) => ToggleError::Upstream(e),
+        }
+    }
+}
+
+/// A track that started longer ago than this without a stop entry is assumed to be a stale log line.
+const MAX_PLAYING_AGE_SECS: i64 = 3 * 3600;
+
+fn epoch_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 pub struct App {
     cfg: Config,
     jf: Jellyfin,
-    index: RwLock<Index>,
-    /// One Jellyfin read at a time: its playlist reads are heavy and we never want to hammer it.
-    reading: Mutex<()>,
+    store: Store,
+    /// Details of recently seen tracks, so polling the playing track costs one cheap request.
+    items: Mutex<HashMap<String, PlayingItem>>,
 }
 
 impl App {
     pub fn new(cfg: Config, jf: Jellyfin) -> Arc<Self> {
-        Arc::new(Self { cfg, jf, index: RwLock::new(Index::new()), reading: Mutex::new(()) })
+        let store = Store::new(&cfg.playlist_dir);
+        Arc::new(Self { cfg, jf, store, items: Mutex::new(HashMap::new()) })
     }
 
-    fn cache_path(&self) -> PathBuf {
-        PathBuf::from(&self.cfg.data_dir).join("index.json")
+    pub async fn playlist_count(&self) -> Result<usize> {
+        Ok(self.store.view(None).await?.len())
     }
 
-    /// Load the persisted index so a restart is instant. A missing or unreadable cache is not an error.
-    pub async fn load_cache(&self) {
-        match tokio::fs::read_to_string(self.cache_path()).await {
-            Ok(s) => match Index::from_json(&s) {
-                Ok(idx) => {
-                    tracing::info!("loaded cached index with {} playlists", idx.len());
-                    *self.index.write().await = idx;
-                }
-                Err(e) => tracing::warn!("ignoring unreadable index cache: {e}"),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => tracing::warn!("cannot read index cache: {e}"),
-        }
-    }
-
-    async fn save_cache(&self) {
-        let json = match self.index.read().await.to_json() {
-            Ok(j) => j,
-            Err(e) => return tracing::warn!("cannot serialise index: {e}"),
-        };
-        let path = self.cache_path();
-        let tmp = path.with_extension("json.tmp");
-        if let Err(e) = async {
-            if let Some(dir) = path.parent() {
-                tokio::fs::create_dir_all(dir).await?;
-            }
-            tokio::fs::write(&tmp, json).await?;
-            tokio::fs::rename(&tmp, &path).await
-        }
-        .await
-        {
-            tracing::warn!("cannot write index cache: {e}");
-        }
-    }
-
-    /// Bring the index up to date: cheap listing first, then read only the playlists that are new, changed or
-    /// dirty, one at a time. Failures are logged and retried on the next pass.
-    pub async fn sync(&self) -> Result<()> {
-        let listing: Vec<Listed> = self
-            .jf
-            .playlists()
-            .await?
-            .into_iter()
-            .map(|p| Listed { fingerprint: p.fingerprint(), id: p.id, name: p.name })
-            .collect();
-        let stale = self.index.write().await.reconcile(&listing);
-        self.save_cache().await;
-        if !stale.is_empty() {
-            tracing::info!("{} playlist(s) to read", stale.len());
-        }
-        for id in stale {
-            if let Err(e) = self.read_playlist(&id).await {
-                tracing::warn!("reading playlist {id} failed: {e:#}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn read_playlist(&self, id: &str) -> Result<()> {
-        let _one_at_a_time = self.reading.lock().await;
-        let entries = self.jf.entries(id).await?;
-        self.index
-            .write()
-            .await
-            .set_entries(id, entries.into_iter().map(|e| (e.id, e.playlist_item_id)));
-        self.save_cache().await;
-        Ok(())
-    }
-
+    /// What is playing. The activity log is the primary source because Jellyfin's session record can be stale
+    /// with some clients; sessions are the fallback when the log is unavailable or has no audio history.
     async fn now_playing(&self) -> Result<Option<PlayingItem>> {
+        match self.jf.activity(100).await {
+            Ok(entries) if has_audio_history(&entries) => {
+                return match current_from_activity(&entries, epoch_now(), MAX_PLAYING_AGE_SECS) {
+                    Some(id) => Ok(Some(self.item(&id).await?)),
+                    None => Ok(None),
+                };
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("activity log unavailable, falling back to sessions: {e:#}"),
+        }
         let sessions = self.jf.sessions().await?;
         Ok(pick_now_playing(&sessions, &self.cfg.player_client))
     }
 
+    async fn item(&self, id: &str) -> Result<PlayingItem> {
+        if let Some(hit) = self.items.lock().await.get(id) {
+            return Ok(hit.clone());
+        }
+        let fetched = self.jf.item(id).await?;
+        let mut cache = self.items.lock().await;
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(id.to_string(), fetched.clone());
+        Ok(fetched)
+    }
+
+    /// The playlist-file form of the track's path, if it is in the curated library.
+    fn entry_of(&self, item: &PlayingItem) -> Option<String> {
+        item.path.as_deref().and_then(|p| library_entry(p, &self.cfg.music_prefixes))
+    }
+
     pub async fn state(&self) -> Result<StateView> {
         let np = self.now_playing().await?;
-        let idx = self.index.read().await;
-        let playlists = idx.view(np.as_ref().map(|n| n.id.as_str()));
-        let unindexed = idx.unindexed();
-        drop(idx);
+        let entry = np.as_ref().and_then(|n| self.entry_of(n));
+        let playlists = self.store.view(entry.as_deref()).await?;
         let now_playing = np.map(|n| NowPlayingView {
-            incoming: n.path.as_deref().is_some_and(|p| is_incoming(p, &self.cfg.incoming_prefixes)),
+            addable: entry.is_some(),
             id: n.id,
             name: n.name,
             artist: n.album_artist,
             album: n.album,
         });
-        Ok(StateView { now_playing, playlists, unindexed })
+        Ok(StateView { now_playing, playlists })
     }
 
-    /// Add the playing track to the playlist, or remove it if it is already there. The index changes at once;
-    /// the playlist is re-read in the background. Adding an incoming track is refused; removing one is allowed.
+    /// Add the playing track to the playlist file, or remove it if it is already there.
     pub async fn toggle(self: &Arc<Self>, playlist_id: &str) -> Result<StateView, ToggleError> {
         let track = self.now_playing().await?.ok_or(ToggleError::NothingPlaying)?;
-        let member = {
-            let idx = self.index.read().await;
-            match idx.is_indexed(playlist_id) {
-                None => return Err(ToggleError::UnknownPlaylist),
-                Some(false) => return Err(ToggleError::NotIndexedYet),
-                Some(true) => idx.is_member(playlist_id, &track.id),
-            }
-        };
-        if !member {
-            if track.path.as_deref().is_some_and(|p| is_incoming(p, &self.cfg.incoming_prefixes)) {
-                return Err(ToggleError::Incoming);
-            }
-            self.jf.add(playlist_id, &track.id).await?;
-            self.index.write().await.mark_added(playlist_id, &track.id);
-        } else {
-            let mut entries = self.index.read().await.entry_ids(playlist_id, &track.id);
-            if entries.is_empty() {
-                // Added by us a moment ago: the entry id is not known until the playlist is re-read.
-                self.read_playlist(playlist_id).await?;
-                entries = self.index.read().await.entry_ids(playlist_id, &track.id);
-            }
-            if !entries.is_empty() {
-                self.jf.remove(playlist_id, &entries).await?;
-            }
-            self.index.write().await.mark_removed(playlist_id, &track.id);
-        }
-        self.save_cache().await;
-        let app = Arc::clone(self);
-        let id = playlist_id.to_string();
+        let entry = self.entry_of(&track).ok_or(ToggleError::NotInLibrary)?;
+        self.store.toggle(playlist_id, &entry).await?;
+        // Best effort: tell Jellyfin the file changed so Finamp and the others see the new playlist.
+        let jf = self.jf.clone();
+        let path = format!("{}/{}.m3u", self.cfg.jellyfin_playlist_dir.trim_end_matches('/'), playlist_id);
         tokio::spawn(async move {
-            if let Err(e) = app.read_playlist(&id).await {
-                tracing::warn!("background re-read of {id} failed: {e:#}");
+            if let Err(e) = jf.library_updated(&path).await {
+                tracing::warn!("could not tell Jellyfin that {path} changed: {e:#}");
             }
         });
         Ok(self.state().await?)
-    }
-
-    pub async fn playlist_count(&self) -> usize {
-        self.index.read().await.len()
     }
 }

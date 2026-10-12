@@ -18,11 +18,13 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/health", get(health))
         .route("/api/state", get(state))
         .route("/api/playlists/{id}/toggle", post(toggle))
+        .fallback(crate::web::serve)
         .with_state(app)
 }
 
-async fn health(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
-    Json(json!({ "status": "ok", "playlists": app.playlist_count().await }))
+async fn health(State(app): State<Arc<App>>) -> Result<Json<serde_json::Value>, ApiError> {
+    let n = app.playlist_count().await.map_err(ToggleError::from)?;
+    Ok(Json(json!({ "status": "ok", "playlists": n })))
 }
 
 async fn state(State(app): State<Arc<App>>) -> Result<Json<StateView>, ApiError> {
@@ -44,7 +46,7 @@ impl From<ToggleError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match self.0 {
-            ToggleError::NothingPlaying | ToggleError::Incoming | ToggleError::NotIndexedYet => StatusCode::CONFLICT,
+            ToggleError::NothingPlaying | ToggleError::NotInLibrary => StatusCode::CONFLICT,
             ToggleError::UnknownPlaylist => StatusCode::NOT_FOUND,
             ToggleError::Upstream(_) => StatusCode::BAD_GATEWAY,
         };

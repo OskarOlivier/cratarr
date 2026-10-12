@@ -1,0 +1,12 @@
+{
+  "Items": [
+    { "Id": 1008, "Name": "User is playing Artist C - Track 5 on Device 1", "Type": "AudioPlayback", "ItemId": "item-e", "Date": "2026-10-12T13:28:00.1234567Z", "Severity": "Information" },
+    { "Id": 1007, "Name": "User has finished playing Artist B - Track 4 on Device 1", "Type": "AudioPlaybackStopped", "ItemId": "item-d", "Date": "2026-10-12T13:22:16.4000000Z", "Severity": "Information" },
+    { "Id": 1006, "Name": "User is playing Artist B - Track 4 on Device 1", "Type": "AudioPlayback", "ItemId": "item-d", "Date": "2026-10-12T13:21:00.9000000Z", "Severity": "Information" },
+    { "Id": 1005, "Name": "User has finished playing Artist B - Track 3 on Device 1", "Type": "AudioPlaybackStopped", "ItemId": "item-c", "Date": "2026-10-12T13:21:00.9000000Z", "Severity": "Information" },
+    { "Id": 1004, "Name": "User is playing Artist B - Track 3 on Device 1", "Type": "AudioPlayback", "ItemId": "item-c", "Date": "2026-10-12T13:12:58.2000000Z", "Severity": "Information" },
+    { "Id": 1003, "Name": "Session started", "Type": "SessionStarted", "Date": "2026-10-12T13:00:00.0000000Z", "Severity": "Information" }
+  ],
+  "TotalRecordCount": 6,
+  "StartIndex": 0
+}
