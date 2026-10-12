@@ -1,0 +1,19 @@
+# Rust
+/server/target/
+# Node / Svelte
+/web/node_modules/
+/web/dist/
+/web/.svelte-kit/
+# Local config and secrets
+.env
+*.local
+config.local.*
+# Local data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
