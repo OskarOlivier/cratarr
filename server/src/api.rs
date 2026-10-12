@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -17,6 +17,7 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/state", get(state))
+        .route("/api/cover/{id}", get(cover))
         .route("/api/playlists/{id}/toggle", post(toggle))
         .fallback(crate::web::serve)
         .with_state(app)
@@ -33,6 +34,22 @@ async fn state(State(app): State<Arc<App>>) -> Result<Json<StateView>, ApiError>
 
 async fn toggle(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<StateView>, ApiError> {
     Ok(Json(app.toggle(&id).await?))
+}
+
+async fn cover(State(app): State<Arc<App>>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    use crate::covers::Outcome;
+    let inm = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok());
+    let cache = (header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=86400"));
+    let tag = |etag: &str| HeaderValue::from_str(etag).unwrap_or(HeaderValue::from_static("\"\""));
+    match app.cover(&id, inm).await {
+        Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "no cover" }))).into_response(),
+        Outcome::NotModified { etag } => (StatusCode::NOT_MODIFIED, [cache, (header::ETAG, tag(&etag))]).into_response(),
+        Outcome::Image { content_type, etag, bytes } => (
+            [cache, (header::ETAG, tag(&etag)), (header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
+            bytes,
+        )
+            .into_response(),
+    }
 }
 
 pub struct ApiError(ToggleError);

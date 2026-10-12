@@ -113,6 +113,20 @@ impl App {
         item.path.as_deref().and_then(|p| library_entry(p, &self.cfg.music_prefixes))
     }
 
+    /// The cover of the album that holds the given track. `NotFound` when the track is unknown, outside the library,
+    /// or has no cover. The id is only a lookup key for Jellyfin, never a path.
+    pub async fn cover(&self, id: &str, if_none_match: Option<&str>) -> crate::covers::Outcome {
+        use crate::covers::{Outcome, resolve, valid_item_id};
+        if !valid_item_id(id) {
+            return Outcome::NotFound;
+        }
+        let Ok(item) = self.item(id).await else { return Outcome::NotFound };
+        match self.entry_of(&item) {
+            Some(entry) => resolve(std::path::Path::new(&self.cfg.playlist_dir), &entry, if_none_match).await,
+            None => Outcome::NotFound,
+        }
+    }
+
     pub async fn state(&self) -> Result<StateView> {
         let np = self.now_playing().await?;
         let entry = np.as_ref().and_then(|n| self.entry_of(n));

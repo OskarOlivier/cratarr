@@ -36,6 +36,8 @@
   });
 
   const np = $derived(view?.now_playing ?? null);
+  // Track ids whose cover failed to load (not in the library, or no cover file): no image, no gap.
+  let noCover = $state<Record<string, boolean>>({});
 
   const items = $derived.by(() => {
     const q = filter.trim().toLowerCase();
@@ -71,6 +73,11 @@
 
 <main>
   <header>
+    {#if np && !noCover[np.id]}
+      {#key np.id}
+        <img class="cover" src="/api/cover/{np.id}" alt="" decoding="async" onerror={() => np && (noCover[np.id] = true)} />
+      {/key}
+    {/if}
     <div class="np">
       {#if np}
         <div class="title">{np.name}</div>
@@ -146,6 +153,16 @@
 
   .np {
     min-width: 0;
+    margin-right: auto;
+  }
+
+  .cover {
+    flex: none;
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: var(--surface);
   }
 
   .title {
