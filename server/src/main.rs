@@ -7,11 +7,34 @@ mod nowplaying;
 mod playlists;
 mod web;
 
+use std::io::{Read, Write};
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 
+/// `cratarr-server --healthcheck`: for the container's health check (the image has no curl). Exit code 0 when
+/// the local server answers its health endpoint with 200.
+fn healthcheck() -> i32 {
+    let port = std::env::var("CRATARR_BIND")
+        .ok()
+        .and_then(|b| b.rsplit(':').next().map(str::to_string))
+        .unwrap_or_else(|| "8080".into());
+    let Ok(mut s) = std::net::TcpStream::connect(format!("127.0.0.1:{port}")) else { return 1 };
+    s.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    if s.write_all(b"GET /api/health HTTP/1.0\r\nHost: localhost\r\n\r\n").is_err() {
+        return 1;
+    }
+    let mut reply = String::new();
+    s.read_to_string(&mut reply).ok();
+    i32::from(!reply.starts_with("HTTP/1.1 200") && !reply.starts_with("HTTP/1.0 200"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--healthcheck") {
+        std::process::exit(healthcheck());
+    }
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();

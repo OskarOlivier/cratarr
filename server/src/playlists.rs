@@ -20,6 +20,8 @@ pub struct PlaylistView {
     pub id: String,
     pub name: String,
     pub member: bool,
+    /// Number of entries (lines that are not blank or comments).
+    pub count: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +40,13 @@ pub struct Toggled {
 struct Cached {
     stamp: (SystemTime, u64),
     entries: HashSet<String>,
+    count: usize,
+}
+
+impl Cached {
+    fn parse(stamp: (SystemTime, u64), text: &str) -> Self {
+        Self { stamp, entries: m3u::entries(text).collect(), count: m3u::entries(text).count() }
+    }
 }
 
 pub struct Store {
@@ -93,7 +102,7 @@ impl Store {
                 match tokio::fs::read(&path).await {
                     Ok(bytes) => {
                         let text = String::from_utf8_lossy(&bytes);
-                        cache.insert(id.clone(), Cached { stamp, entries: m3u::entries(&text).collect() });
+                        cache.insert(id.clone(), Cached::parse(stamp, &text));
                     }
                     Err(e) => {
                         tracing::warn!("cannot read {}: {e}", path.display());
@@ -101,8 +110,9 @@ impl Store {
                     }
                 }
             }
-            let member = entry.is_some_and(|t| cache.get(&id).is_some_and(|c| c.entries.contains(t)));
-            out.push(PlaylistView { name: id.clone(), id, member });
+            let c = &cache[&id];
+            let member = entry.is_some_and(|t| c.entries.contains(t));
+            out.push(PlaylistView { name: id.clone(), member, count: c.count, id });
         }
         out.sort_by_key(|p| p.name.to_lowercase());
         Ok(out)
@@ -135,10 +145,10 @@ impl Store {
             return Err(anyhow!(e).context(format!("replacing {id}.m3u")).into());
         }
         if let Ok(m) = tokio::fs::metadata(&path).await {
-            self.cache.write().await.insert(
-                id.to_string(),
-                Cached { stamp: (m.modified().unwrap_or(UNIX_EPOCH), m.len()), entries: m3u::entries(&new_text).collect() },
-            );
+            self.cache
+                .write()
+                .await
+                .insert(id.to_string(), Cached::parse((m.modified().unwrap_or(UNIX_EPOCH), m.len()), &new_text));
         }
         Ok(Toggled { added })
     }
@@ -219,8 +229,8 @@ mod tests {
         assert_eq!(
             v,
             vec![
-                PlaylistView { id: "Analogic".into(), name: "Analogic".into(), member: false },
-                PlaylistView { id: "chill".into(), name: "chill".into(), member: true },
+                PlaylistView { id: "Analogic".into(), name: "Analogic".into(), member: false, count: 1 },
+                PlaylistView { id: "chill".into(), name: "chill".into(), member: true, count: 2 },
             ]
         );
     }
@@ -243,6 +253,24 @@ mod tests {
         assert_eq!(s.toggle("a", "B/2.mp3").await.unwrap(), Toggled { added: false });
         assert_eq!(d.read("a.m3u"), "A/1.mp3\n");
         assert!(!s.view(Some("B/2.mp3")).await.unwrap()[0].member);
+    }
+
+    #[tokio::test]
+    async fn the_count_follows_edits_and_ignores_comments_and_blanks() {
+        let d = Dir::new();
+        d.write("a.m3u", "#EXTM3U
+
+A/1.mp3
+A/1.mp3
+# note
+B/2.mp3
+");
+        let s = d.store();
+        assert_eq!(s.view(None).await.unwrap()[0].count, 3, "duplicate lines count, comments and blanks do not");
+        s.toggle("a", "C/3.mp3").await.unwrap();
+        assert_eq!(s.view(None).await.unwrap()[0].count, 4);
+        s.toggle("a", "A/1.mp3").await.unwrap();
+        assert_eq!(s.view(None).await.unwrap()[0].count, 2, "removing drops every copy");
     }
 
     #[tokio::test]

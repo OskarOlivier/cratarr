@@ -6,6 +6,23 @@
   let notice = $state<string | null>(null);
   let filter = $state('');
   let membersFirst = $state(false);
+  // Zoom = chip width, which sets how many columns fit. Remembered per browser (storage may be unavailable).
+  const WIDTHS = [110, 140, 170, 210, 260, 340];
+  let zoom = $state(2);
+  try {
+    const saved = Number(localStorage.getItem('cratarr-zoom'));
+    if (Number.isInteger(saved) && saved >= 0 && saved < WIDTHS.length) zoom = saved;
+  } catch {
+    /* default zoom */
+  }
+  function setZoom(next: number) {
+    zoom = Math.min(WIDTHS.length - 1, Math.max(0, next));
+    try {
+      localStorage.setItem('cratarr-zoom', String(zoom));
+    } catch {
+      /* not remembered */
+    }
+  }
   // Taps flip the chip at once; the server's answer replaces this guess.
   let optimistic = $state<Record<string, boolean>>({});
   let busy = $state<Record<string, boolean>>({});
@@ -39,7 +56,10 @@
 
   const items = $derived.by(() => {
     const q = filter.trim().toLowerCase();
-    let list = (view?.playlists ?? []).map((p) => ({ ...p, member: optimistic[p.id] ?? p.member }));
+    let list = (view?.playlists ?? []).map((p) => {
+      const member = optimistic[p.id] ?? p.member;
+      return { ...p, member, count: p.count + (member === p.member ? 0 : member ? 1 : -1) };
+    });
     if (q) list = list.filter((p) => p.name.toLowerCase().includes(q));
     if (membersFirst) list = [...list].sort((a, b) => Number(b.member) - Number(a.member));
     return list;
@@ -94,6 +114,10 @@
       <button aria-pressed={!membersFirst} onclick={() => (membersFirst = false)}>A–Z</button>
       <button aria-pressed={membersFirst} onclick={() => (membersFirst = true)}>In first</button>
     </div>
+    <div class="seg" role="group" aria-label="Zoom">
+      <button aria-label="Zoom out, more columns" disabled={zoom === 0} onclick={() => setZoom(zoom - 1)}>−</button>
+      <button aria-label="Zoom in, fewer columns" disabled={zoom === WIDTHS.length - 1} onclick={() => setZoom(zoom + 1)}>+</button>
+    </div>
   </div>
 
   {#if error}<div class="banner error" role="alert">{error}</div>{/if}
@@ -102,7 +126,7 @@
   {#if !view && !error}
     <p class="empty">Loading…</p>
   {:else}
-    <ul class="grid">
+    <ul class="grid" style:--min="{WIDTHS[zoom]}px">
       {#each items as p (p.id)}
         <li>
           <button
@@ -116,6 +140,7 @@
           >
             <span class="mark" aria-hidden="true">{p.member ? '✓' : '+'}</span>
             <span class="name">{p.name}</span>
+            <span class="n">{p.count}</span>
           </button>
         </li>
       {/each}
@@ -126,9 +151,7 @@
 
 <style>
   main {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 16px 48px;
+    padding: 0 clamp(12px, 2vw, 32px) 48px;
   }
 
   header {
@@ -228,6 +251,11 @@
     cursor: pointer;
   }
 
+  .seg button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
   .seg button[aria-pressed='true'] {
     background: var(--accent);
     color: var(--accent-text);
@@ -255,7 +283,7 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(var(--min, 170px), 1fr));
     gap: 10px;
     margin: 0;
     padding: 0;
@@ -323,15 +351,17 @@
     -webkit-box-orient: vertical;
   }
 
+  .n {
+    flex: none;
+    margin-left: auto;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.65;
+  }
+
   .empty {
     margin-top: 32px;
     text-align: center;
     color: var(--muted);
-  }
-
-  @media (max-width: 520px) {
-    .grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
   }
 </style>

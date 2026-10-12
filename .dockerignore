@@ -1,0 +1,5 @@
+.git
+server/target
+web/node_modules
+web/dist
+**/.cratarr-bin-tmp

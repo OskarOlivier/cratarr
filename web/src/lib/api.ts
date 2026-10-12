@@ -1,4 +1,4 @@
-export type Playlist = { id: string; name: string; member: boolean };
+export type Playlist = { id: string; name: string; member: boolean; count: number };
 
 export type NowPlaying = {
   id: string;
